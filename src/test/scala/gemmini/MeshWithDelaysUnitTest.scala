@@ -5,15 +5,45 @@ import chisel3._
 import chisel3.iotesters._
 import TestUtils._
 import scala.util.Random.shuffle
+import chisel3.util._ // for log2Up
+// import firrtl.ExecutionOptionsManager
+
+
+// import firrtl.{ExecutionOptionsManager, HasFirrtlOptions}
+// import firrtl._
 
 // TODO add test for randomly choosing S
 // TODO add test for inputting A, B, and D in different orders
 // TODO add test for switching dataflow at runtime
 // TODO get a better initialization strategy
 
+// we need the U type to be a TagQueueTag with Data, and NOT UInt!
+// MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
+
+  // Tags
+class DummyTag extends Bundle with TagQueueTag {
+  // val latency_per_pe = ((tile_latency + 1).toFloat / (tileRows min tileColumns)) max 1.0f
+  // val max_simultaneous_matmuls = (5 * latency_per_pe).ceil.toInt
+
+  val tag = UInt(2.W) // make it 2bit wire
+  val id = UInt(3.W)
+  val total_rows = UInt(5.W)
+
+  override def make_this_garbage(dummy: Int=0): Unit = {
+    total_rows := 16.U
+    tag := 0.U // UInt doesn't have make_this_garbage, so we assign default
+  }
+}
+// val max_simultaneous_matmuls = if (n_simultaneous_matmuls == -1) {
+//     (5 * latency_per_pe).ceil.toInt
+//   } else {
+//     n_simultaneous_matmuls
+//   }
+
+
 case class MeshTesterInput(A: Matrix[Int], B: Matrix[Int], D: Matrix[Int], flipS: Boolean)
 
-abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[MeshTesterInput],
+abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, DummyTag], ms: Seq[MeshTesterInput],
                                       inputGarbageCycles: () => Int, shift: Int = 0,
                                       verbose: Boolean = false)
   extends PeekPokeTester(c)
@@ -34,7 +64,7 @@ abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[Mes
   }
 
   def pokeAllInputValids(v: Boolean): Unit = {
-    val valids = Seq(c.io.a.valid, c.io.b.valid, c.io.d.valid, c.io.s, c.io.tag_in.valid)
+    val valids = Seq(c.io.a.valid, c.io.b.valid, c.io.d.valid) //, c.io.s, c.io.tag_in.valid) // Edward commented out these io values that don't exist
     valids.foreach(vpin => poke(vpin, v))
   }
 
@@ -57,30 +87,58 @@ abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[Mes
   var raw_mesh_output = Seq.empty[RawMeshOutputT]
 
   def updateOutput(): Unit = {
-    if (peek(c.io.out.valid) == 1) {
-      val peek_c = peek(c.io.out.bits).map(_.toInt)
-      val peek_s = peek(c.io.out_s).map(_.toInt % 2).reduce { (acc, s) =>
-          assert(acc == s, "s values aren't all the same")
+    // if (peek(c.io.out.valid) == 1) {
+    if (peek(c.io.resp.valid) == 1) { // Edward added this
+      
+      // val peek_c = peek(c.io.out.bits).map(_.toInt)
+      val peek_c = peek(c.io.resp.bits.data).map(_.toInt) // Edward added this
+      
+      // out_s does not exist anymore, so remove, idk what it was for, checking parity even/odd? it is outputted as a sequence of Ints?
+      // val peek_s = peek(c.io.out_s).map(_.toInt % 2).reduce { (acc, s) =>
+      //     assert(acc == s, "s values aren't all the same")
+      //     acc
+      // }
+      val peek_s = peek(c.io.resp.bits.data).map(_.toInt % 2).reduce { (acc, s) =>
+          assert(acc == s, "s values aren't all the same") // is s really c.io.resp.bits.data?
           acc
       }
-      val peek_tag = peek(c.io.tag_out).toInt
-      if (peek_tag != -1)
-        raw_mesh_output = (peek_c, peek_s, peek_tag) +: raw_mesh_output
+      // this is what data looks like: val data = Vec(meshCols, Vec(tileCols, outType))
+      // this parity checks all elements in the output data matrix, if they are all even or all odd.
+
+      // val peek_tag = peek(c.io.tag_out).toInt
+      val peek_tag = peek(c.io.resp.bits.tag)
+      val id = peek_tag("id").toInt
+      if (id != -1) // is this id checking correct?
+        raw_mesh_output = (peek_c, peek_s, id) +: raw_mesh_output // what is peek_s? is outputted as a sequence of Ints?
     }
   }
 
   def startup(getOut: Boolean): Unit = {
-    poke(c.io.tag_garbage, -1)
-    poke(c.io.shift, shift)
-    poke(c.io.flush.bits, 2)
+    // poke(c.io.tag_garbage, -1)
+    // Create a DummyTag object and set its fields using make_this_garbage
+    val tag_garbage = Wire(new DummyTag)  // This is a wire of the same type as 'tag'
+    tag_garbage := DontCare  // Initialize it with DontCare to avoid uninitialized state
+    tag_garbage.make_this_garbage()  // Set it to garbage values
+    // Poke the values into the c.io.req.bits.tag fields
+    poke(c.io.req.bits.tag.id, tag_garbage.id)  // Poke the id field of the tag
+    poke(c.io.req.bits.tag.total_rows, tag_garbage.total_rows)  // Poke the total_rows field
+    poke(c.io.req.bits.tag.tag, tag_garbage.tag)  // Poke the nested tag field (if it's another bundle)
+
+
+    // poke(c.io.shift, shift)
+    // poke(c.io.flush.bits, 2)
+    poke(c.io.req.bits.flush, 2) // Edward added this
     reset()
-    poke(c.io.flush.valid, 1)
+    // poke(c.io.flush.valid, 1)
+    poke(c.io.req.valid, 1) // Edward added this
     do {
       step(1)
-      poke(c.io.flush.valid, 0)
+      // poke(c.io.flush.valid, 0)
+      poke(c.io.req.valid, 0) // Edward added this
       if (getOut)
         updateOutput()
-    } while (peek(c.io.flush.ready) == 0)
+    // } while (peek(c.io.flush.ready) == 0)
+    } while (peek(c.io.req.ready) == 0)
     reset()
   }
 
@@ -104,9 +162,9 @@ abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[Mes
     print2DArray(meshIn.D)
     */
 
-    poke(c.io.s, meshIn.S)
-    poke(c.io.m, meshIn.M)
-    poke(c.io.tag_in.bits, meshIn.tag)
+    // poke(c.io.s, meshIn.S)
+    // poke(c.io.m, meshIn.M)
+    // poke(c.io.tag_in.bits, meshIn.tag)
 
     for ((a, b, d) <- (meshIn.A, meshIn.B, meshIn.D).zipped) {
       pokeAllInputValids(true)
@@ -133,13 +191,17 @@ abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[Mes
   }
 
   // Flush out the final results
-  poke(c.io.s, 1)
-  poke(c.io.flush.valid, 1)
+  // poke(c.io.s, 1)
+  // poke(c.io.flush.valid, 1)
+  poke(c.io.req.valid, 1) // Edward added this
   do {
     step(1)
-    poke(c.io.flush.valid, 0)
+    // poke(c.io.flush.valid, 0)
+    poke(c.io.req.valid, 0) // Edward added this
     updateOutput()
-  } while (peek(c.io.flush.ready) == 0)
+  // } while (peek(c.io.flush.ready) == 0) 
+  } while (peek(c.io.req.ready) == 0) // Edward added this
+
 
   if (verbose) {
     println("Mesh output:")
@@ -203,7 +265,7 @@ abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[Mes
   assert(results.map(_.tag) == meshInputs.init.map(_.tag), "Array tags are not correct")
 }
 
-class OSMeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[MeshTesterInput],
+class OSMeshWithDelaysUnitTest(c: MeshWithDelays[SInt, DummyTag], ms: Seq[MeshTesterInput],
                                inputGarbageCyles: () => Int, shift: Int = 0,
                                verbose: Boolean = false)
   extends MeshWithDelaysUnitTest(c, ms, inputGarbageCyles, shift, verbose = verbose)
@@ -258,7 +320,7 @@ class OSMeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[MeshTester
   }
 }
 
-class WSMeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[MeshTesterInput],
+class WSMeshWithDelaysUnitTest(c: MeshWithDelays[SInt, DummyTag], ms: Seq[MeshTesterInput],
                                inputGarbageCyles: () => Int,
                                verbose: Boolean = false)
   extends MeshWithDelaysUnitTest(c, ms, inputGarbageCyles, verbose = verbose) // WS just ignores shift
@@ -299,15 +361,18 @@ class WSMeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[MeshTester
 
 class MeshWithDelaysTester extends ChiselFlatSpec
 {
-  val dataflow_testers = Seq((c: MeshWithDelays[SInt, UInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int, shift: Int) => new OSMeshWithDelaysUnitTest(c, ms, inputGarbageCyles, shift),
-    (c: MeshWithDelays[SInt, UInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int, shift: Int) => new WSMeshWithDelaysUnitTest(c, ms, inputGarbageCyles))
+  val dataflow_testers = Seq((c: MeshWithDelays[SInt, DummyTag], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int, shift: Int) => new OSMeshWithDelaysUnitTest(c, ms, inputGarbageCyles, shift),
+    (c: MeshWithDelays[SInt, DummyTag], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int, shift: Int) => new WSMeshWithDelaysUnitTest(c, ms, inputGarbageCyles))
 
+  // these all fail, but only shows up as the first one failing, TODO: fix (Edward)
   "SimpleMeshWithDelaysTester" should "work" in {
     // This is really just here to help with debugging
     val dim = 4
 
-    iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-      () => new MeshWithDelays(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.WS, 1, 1, dim, dim,1, 1)) {
+    // iotesters.Driver.execute(Array("--backend-name", "treadle" , "--generate-vcd-output", "on"),
+    chisel3.iotesters.Driver(
+      () => new MeshWithDelays[SInt, DummyTag](SInt(8.W), SInt(16.W), SInt(32.W), SInt(32.W),
+        new DummyTag, Dataflow.WS, false, 1, 1, dim, dim, 1, 1, 0, 0)) {
         // c => new OSMeshWithDelaysUnitTest(c, Seq.fill(1)(MeshTesterInput(rand(dim), rand(dim), rand(dim), true)), () => 0, shift = 0, verbose = true)
         c => new WSMeshWithDelaysUnitTest(c, Seq.fill(1)(MeshTesterInput(rand(dim), rand(dim), rand(dim), true)), () => 0, verbose = true)
     } should be(true)
@@ -316,8 +381,10 @@ class MeshWithDelaysTester extends ChiselFlatSpec
   // Fully combinational
   "MeshWithDelaysTest" should "work fully combinationally with no delays" in {
     for (df <- dataflow_testers) {
-      iotesters.Driver.execute(Array("--backend-name", "treadle"),
-        () => new MeshWithDelays(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.BOTH, 8, 8, 1, 1, 1, 1)) {
+      // iotesters.Driver.execute(Array("--backend-name", "treadle"),
+      chisel3.iotesters.Driver(
+        () => new MeshWithDelays[SInt, DummyTag](SInt(8.W), SInt(16.W), SInt(32.W), SInt(32.W),
+        new DummyTag, Dataflow.BOTH, false, 8, 8, 1, 1, 1, 1, 0, 0)) {
         c => df(c, Seq.fill(8)(MeshTesterInput(rand(8), rand(8), rand(8), true)), () => 0, 0)
       } should be(true)
     }
@@ -325,8 +392,10 @@ class MeshWithDelaysTester extends ChiselFlatSpec
 
   it should "work fully combinationally with random delays" in {
     for (df <- dataflow_testers) {
-      iotesters.Driver.execute(Array("--backend-name", "treadle"),
-        () => new MeshWithDelays(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.BOTH, 8, 8, 1, 1, 1, 1)) {
+      // iotesters.Driver.execute(Array("--backend-name", "treadle"),
+      chisel3.iotesters.Driver(
+        () => new MeshWithDelays[SInt, DummyTag](SInt(8.W), SInt(16.W), SInt(32.W), SInt(32.W),
+        new DummyTag, Dataflow.BOTH, false, 8, 8, 1, 1, 1, 1, 0, 0)) {
         c => df(c, Seq.fill(8)(MeshTesterInput(rand(8), rand(8), rand(8), true)), () => scala.util.Random.nextInt(5), 0)
       } should be(true)
     }
@@ -335,8 +404,10 @@ class MeshWithDelaysTester extends ChiselFlatSpec
   // Fully pipelined
   it should "work fully pipelined with no delays" in {
     for (df <- dataflow_testers) {
-      iotesters.Driver.execute(Array("--backend-name", "treadle"),
-        () => new MeshWithDelays(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.BOTH, 1, 1, 8, 8, 1, 1)) {
+      // iotesters.Driver.execute(Array("--backend-name", "treadle"),
+      chisel3.iotesters.Driver(
+        () => new MeshWithDelays[SInt, DummyTag](SInt(8.W), SInt(16.W), SInt(32.W), SInt(32.W),
+        new DummyTag, Dataflow.BOTH, false, 1, 1, 8, 8, 1, 1, 0, 0)) {
         c => df(c, Seq.fill(8)(MeshTesterInput(rand(8), rand(8), rand(8), true)), () => 0, 0)
       } should be(true)
     }
@@ -344,8 +415,11 @@ class MeshWithDelaysTester extends ChiselFlatSpec
 
   it should "work fully pipelined with random delays" in {
     for (df <- dataflow_testers) {
-      iotesters.Driver.execute(Array("--backend-name", "treadle"),
-        () => new MeshWithDelays(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.BOTH, 1, 1, 8, 8, 1, 1)) {
+      // iotesters.Driver.execute(Array("--backend-name", "treadle"),
+      chisel3.iotesters.Driver(
+        () => new MeshWithDelays[SInt, DummyTag](SInt(8.W), SInt(16.W), SInt(32.W), SInt(32.W),
+         new DummyTag, Dataflow.BOTH, false, 1, 1, 8, 8, 1, 1,
+         0, 0)) { // 0 leftBanks, 0 upBanks (no delays on inputs), outBanks has default delay of 1, n_simultaneous_matmuls = -1 by default
         c => df(c, Seq.fill(8)(MeshTesterInput(rand(8), rand(8), rand(8), true)), () => scala.util.Random.nextInt(5), 0)
       } should be(true)
     }
@@ -384,8 +458,9 @@ class MeshWithDelaysTester extends ChiselFlatSpec
           val df_testers = df_with_tester._2
 
           for (dft <- df_testers) {
-            iotesters.Driver.execute(Array("--backend-name", "treadle"),
-              () => new MeshWithDelays(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), df, tile_height, tile_width, mesh_height, mesh_width, left_banks, up_banks, out_banks)) {
+            // iotesters.Driver.execute(Array("--backend-name", "treadle"),
+            chisel3.iotesters.Driver(
+              () => new MeshWithDelays(SInt(8.W), SInt(16.W), SInt(32.W), SInt(32.W), new DummyTag, df, false, 1, 1, tile_height, tile_width, mesh_height, mesh_width, left_banks, up_banks, out_banks)) {
               c =>
                 dft(c, Seq.fill(8)(MeshTesterInput(rand(matrix_dim), rand(matrix_dim),
                   rand(matrix_dim), true)), in_delay, shift)

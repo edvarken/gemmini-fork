@@ -13,7 +13,6 @@ class MeshWithDelaysReq[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](ac
   val total_rows = UInt(log2Up(block_size+1).W)
   val tag = tagType
   val flush = UInt(2.W) // TODO magic number
-
 }
 
 class MeshWithDelaysResp[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](outType: T, meshCols: Int, tileCols: Int, block_size: Int, tagType: TagT) extends Bundle {
@@ -21,7 +20,6 @@ class MeshWithDelaysResp[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](o
   val total_rows = UInt(log2Up(block_size+1).W)
   val tag = tagType
   val last = Bool()
-
 }
 
 // TODO Add io.out.ready back in. Before it was removed, it didn't work when banking, and it seemed to assume that SRAM outputs stay steady when ren is low
@@ -32,7 +30,7 @@ class MeshWithDelaysResp[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](o
 class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   (val inputType: T,  val weightType: T, val outputType: T, accType: T,
    tagType: U, df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int, output_delay: Int,
-   tileRows: Int, tileColumns: Int, meshRows: Int, meshColumns: Int,
+   val tileRows: Int, val tileColumns: Int, val meshRows: Int, val meshColumns: Int, // exposed them as values now, (added the val)
    leftBanks: Int, upBanks: Int, outBanks: Int = 1, n_simultaneous_matmuls: Int = -1)
   extends Module {
 
