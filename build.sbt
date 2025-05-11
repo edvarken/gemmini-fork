@@ -18,16 +18,17 @@ scalaVersion := "2.12.15"
 // dependencyOverrides += "edu.berkeley.cs" %% "firrtl" % "1.4.0"
 
 // FORCE FIRRTL 1.4.0
-dependencyOverrides += "edu.berkeley.cs" %% "firrtl" % "1.5.6"
+// dependencyOverrides += "edu.berkeley.cs" %% "firrtl" % "1.5.6"
+dependencyOverrides += "edu.berkeley.cs" %% "firrtl-interpreter" % "1.5.6"
 dependencyOverrides += "edu.berkeley.cs" %% "chisel3" % "3.5.6"
 dependencyOverrides += "edu.berkeley.cs" %% "chisel-iotesters" % "1.5-SNAPSHOT"
 
+libraryDependencies += "edu.berkeley.cs" %% "firrtl-interpreter" % "1.5.6" % Test // add Firrtl as a test dependency explicitly
 libraryDependencies += "edu.berkeley.cs" %% "chisel3" % "3.5.6"
-libraryDependencies += "edu.berkeley.cs" %% "firrtl" % "1.5.6"
 libraryDependencies += "edu.berkeley.cs" %% "chisel-iotesters" % "1.5-SNAPSHOT"
 
 
-Test / classLoaderLayeringStrategy := ClassLoaderLayeringStrategy.Flat
+// Test / classLoaderLayeringStrategy := ClassLoaderLayeringStrategy.Flat
 
 
 // Test / classLoaderLayeringStrategy := ClassLoaderLayeringStrategy.Flat // does not solve issue
