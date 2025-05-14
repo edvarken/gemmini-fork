@@ -1,3 +1,7 @@
+the test-mesh-only branch is local on my pc. but no longer relevant, I don't gain anything out of testing the systolic array on sbt chiseltests, if I cannot add my hardware blocks later and run full profile tests that way.
+so new way: just pull the master branch from gemmini, and profile that on docker linux environment. this test-mesh-only branch is no longer relevant
+
+
 <p align="center">
   <img width="1000" src="./img/full-logo.svg">
 </p>
